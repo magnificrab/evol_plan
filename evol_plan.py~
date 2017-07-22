@@ -1,0 +1,414 @@
+'''Evolutionary project planner based on Taskjuggler'''
+import os
+import sys
+import shutil
+import re
+import string
+import csv
+import time
+import uuid
+import argparse
+import logging
+import ast
+#import pdb #TODO
+from random import randint
+from Naked.toolshed.shell import execute_rb
+import openpyxl
+
+def nonetoz(f):
+	'''Convert all types including None to numeric where bogus is zero'''
+	if f is None:
+		return 0
+	if type(f) is float:
+		return f
+	if type(f) is int:
+		return f
+	if type(f) is str:
+		try:
+			x = float(f)
+		except ValueError:
+			x = 0
+		return x
+		#if f.isnumeric():  #TODO: this doen't work with floats
+			#return float(f)
+		#else:
+			#return 0
+	return 0
+
+def plan_ref(s):
+	'''Convert input sub-task reference to fully delimited plan reference'''
+	if s is None:
+		return None
+	l = re.split('\W+', s.strip())
+	s2 = ''
+	for w in l:
+		p2 = w.split('_')
+		s2 += '{}.{}.{}, '.format(w[:1], p2[0], w)
+	return s2[:-2]
+#TODO: clean this up by using join instead
+
+def dash_under(s):
+	'''Convert dash to underscore'''
+	if s is None:
+		return None
+	s2 = str(s)
+	return s2.replace('-', '_')
+
+def strip_quotes(s):
+	'''Remove quotes from a string'''
+	if s is None:
+		return None
+	s2 = str(s)
+	s3 = s2.replace('"', '')
+	s4 = s3.replace("'", "")
+	return s4
+
+def parse_team(s):
+	'''Parse team string by converting to dictionary syntax'''
+	s1 = s.replace(' ', '')
+	s2 = s1.replace(':', '":')
+	s3 = s2.replace(',', ',"')
+	s4 = '{{"{}}}'.format(s3)
+	#print(s4)
+	return ast.literal_eval(s4)
+
+#TODO: enhance to read this in as an input somehow
+def team_size(team):
+	'''For specified team code, return number of assigned employees'''
+	global teamd
+	return teamd[team]
+
+def extract_row(r):
+	"""For TSA Project format, pull out the interesting rows."""
+	tab = None
+	project = None
+	name = None
+	top = None
+	tag = None
+	dep = None
+	eff = None
+	res = None
+	pri = None
+	allocation = None
+	for cell in r:
+		if cell.column == 'B':
+			tab = cell.value
+		if cell.column == 'D':
+			project = cell.value
+		if cell.column == 'E':
+			name = cell.value
+		if cell.column == 'F':
+			top = cell.value
+		if cell.column == 'G':
+			tag = cell.value
+		if cell.column == 'J':
+			dep = cell.value
+		if cell.column == 'AS':
+			eff = cell.value
+		if cell.column == 'AT':
+			res = cell.value
+		if cell.column == 'AU':
+			pri = cell.value
+	if tab is None and top is None and tag is None:
+		typ = 'spacer'
+	elif tag == 'Detail Tag' and name == 'DETAILS':
+		typ = 'header'
+	elif tab is not None and top is None and tag is None:
+		typ = 'ws'
+	elif top is not None and tag is None:
+		typ = 'super'
+	elif tag is not None and nonetoz(eff) > 0:
+		typ = 'sub'
+	else:
+		typ = 'unk'
+	return (typ,                     #0
+			dash_under(top), 
+			dash_under(tag), 
+			strip_quotes(tab),       #B, 3
+			strip_quotes(project), 
+			strip_quotes(name),
+			dash_under(dep),         #J, 6
+			nonetoz(eff),            #AS, 7
+			res,                     #AT, 8
+			pri,                     #AU, 9
+			allocation)
+
+def extract_excel(xlsFile, xlsSheet):
+	"""Convert xls to csv"""
+	wb = openpyxl.load_workbook(xlsFile, data_only=True)
+	ws = wb.get_sheet_by_name(xlsSheet)
+	t = []
+	for row in ws.iter_rows():
+		tplan = extract_row(row)
+		if tplan[0] in ['ws', 'super', 'sub']:
+			t.append(tplan)
+	return t
+
+#TODO: this approach is not effective when allocating a large effort to a
+#small team. Will never fully allocate.
+def rand_resource(team, tsz, effort):
+	'''Assign resources based on team size and effort of associated task.'''
+	ret = []
+	if effort <= 1:
+		ret.append('{}{}'.format(team, randint(1, tsz)))
+	elif effort <= 4:
+		for i in range(1, randint(1, 2)+1):
+			ret.append('{}{}'.format(team, randint(1, tsz)))
+	else:
+		for i in range(1, randint(1, 5)+1):
+			ret.append('{}{}'.format(team, randint(1, tsz)))
+	rc = ', '.join(list(set(ret)))
+	return rc
+
+def define_resources(of, teams):
+	'''Write out team definitions to tji file.'''
+	for t in teams:
+		of.write('resource {} "{}" {{\n'.format(t, t))
+		for i in range(1, team_size(t)+1):
+			of.write('  resource {}{} "{}{}"\n'.format(t, i, t, i))
+		of.write('}\n')
+
+def allocate_resources(t):
+	'''Return a tplan list identical to the input except for allocations are added.'''
+	t1 = []
+	for tplan in t:
+		if tplan[0] == 'sub':
+			alloc = rand_resource(tplan[8], team_size(tplan[8]), tplan[7])
+		else:
+			alloc = None
+		tplan1 = (tplan[0],
+			tplan[1],
+			tplan[2],
+			tplan[3],
+			tplan[4],
+			tplan[5],
+			tplan[6],
+			tplan[7],
+			tplan[8],
+			tplan[9],
+			alloc)
+		t1.append(tplan1)
+	return t1
+
+def perturb_allocations(t, rate=10):
+	'''Randomly mutate the task allocations'''
+	t1 = []
+	for tplan in t:
+		if tplan[0] == 'sub' and randint(0, 99) < rate :
+			alloc = rand_resource(tplan[8], team_size(tplan[8]), tplan[7])
+		else:
+			alloc = tplan[10]
+		tplan1 = (tplan[0],
+			tplan[1],
+			tplan[2],
+			tplan[3],
+			tplan[4],
+			tplan[5],
+			tplan[6],
+			tplan[7],
+			tplan[8],
+			tplan[9],
+			alloc)
+		t1.append(tplan1)
+	return t1
+
+def generate_tji(t, name_root):
+	"""Convert csv to tji"""
+	global teamd
+	of = open('{}.tji'.format(name_root), 'w')
+	define_resources(of, teamd.keys())
+	tc = 0 #tab count
+	uc = 0 #super count for supertask
+	c = 0  #row count for debugging
+	for tplan in t:
+		c += 1
+		if tplan[0] == 'ws': #TODO: rename tab
+			tc += 1
+			uc = 0
+			if tc > 1:
+				of.write('}\n')
+				of.write('}\n')
+			of.write('task {0} "{1}" {{\n'.format(tplan[3][:1], tplan[3]))
+		if tplan[0] == 'super':
+			uc += 1
+			if uc > 1:
+				of.write('}\n')
+			of.write('task {0} "{1}" {{\n'.format(tplan[1], tplan[4]))
+		if tplan[0] == 'sub':
+			of.write('task {0} "{1}" {{\n'.format(tplan[2], tplan[5]))
+			of.write('  effort {0}m\n'.format(tplan[7]))
+			#of.write('  allocate {}\n'.format(rand_resource(tplan[8],team_size(tplan[8]),tplan[7])))
+			of.write('  allocate {}\n'.format(tplan[10]))
+			if tplan[6] is not None and tplan[6] != '':
+				of.write('  depends {}\n'.format(plan_ref(tplan[6])))
+			of.write('}\n')
+	of.write('}\n')
+	of.write('}\n')
+	of.close()
+
+def save_tasks(t, name_root, new_dir, i):
+	'''Save a copy of the csvfile for later analysis'''
+	with open('{}\\{}_{}.csv'.format(new_dir, name_root, str(i).zfill(4)), 'w') as writer:
+		w = csv.writer(writer, delimiter='|')
+		for tplan in t:
+			w.writerow(tplan)
+
+#TODO: needs addl consistency checking
+def extract_csv(csvfile):
+	'''Read in a csv file'''
+	t = []
+	with open(csvfile, 'r') as reader:
+		r = csv.reader(reader, delimiter='|')
+		for row in r:
+			if row is None or row == '' or row == []:
+				continue
+			row[7] = nonetoz(row[7])
+			tplan = tuple(row)
+			if tplan[0] in ['ws', 'super', 'sub']:
+				t.append(tplan)
+	return t
+
+def fully_allocated(t):
+	'''Returns true if the task is a subtask which has been allocated'''
+	for tplan in t:
+		if tplan[0] == 'sub' and (tplan[8] == '' or tplan[8] is None):
+			return False
+	return True
+
+def fitness_result():
+	'''Parse the taskjuggler output and determine project completion date.'''
+	with open('HLGantt.csv') as csvfile:  #TODO: name dependent on tjp
+		r = csv.reader(csvfile, delimiter=';', quotechar='"')
+		enddate = []
+		for row in r:
+			enddate.append(row[3])
+	return max(enddate[1:])
+
+def result_txt(pre_fitness, post_fitness, success):
+	'''Determine if the most recent run was superior or not to prior.'''
+	if not success:
+		return 'Fail'
+	elif post_fitness < pre_fitness:
+		return 'Better'
+	else:
+		return 'Worse'
+
+def evolution_loop(args):
+	'''Input starting plan, schedule with tj, perturb, and loop.'''
+	best = args.initial_fitness
+	f0 = args.initial_fitness
+	t0 = time.time()
+	[handle, ext] = args.task_file.split('.')
+	if ext in ['xls', 'xlsx', 'xlsm']:
+		tasks2 = extract_excel(args.task_file, 'Summary') #TODO
+	elif ext == 'csv':
+		tasks2 = extract_csv(args.task_file)
+	else:
+		print('Error: unsupported file type: ', ext)
+		logging.error('Error: unsupported file type: {}'.format(ext))
+		sys.exit(1)
+	pdb.set_trace()
+	if not fully_allocated(tasks2):
+		tasks1 = allocate_resources(tasks2)
+	else:
+		tasks1 = tasks2
+
+	for i in range(0, args.iterations):
+		#Randomize the allocations
+		save_tasks(tasks1, args.name_root, args.new_dir, i)
+		generate_tji(tasks1, args.name_root)
+
+		#Run taskjuggler
+		success = execute_rb('C:\\Ruby22-x64\\lib\\ruby\\gems\\2.2.0\\gems\\taskjuggler-3.6.0\\lib\\tj3.rb --silent {}_min.tjp'.format(args.name_root))
+
+		#Determine result
+		shutil.move('{}.tji'.format(args.name_root), 
+				'{}\\{}_{}.tji'.format(args.new_dir, 
+					args.name_root, str(i).zfill(4)))
+		if success:
+			f1 = fitness_result()
+			shutil.move('HLGantt.csv', '{}\\HLGantt{}.csv'.format(args.new_dir, str(i).zfill(4)))
+		else:
+			f1 = f0
+			logging.error('taskjuggler failed: iteration {}'.format(i))
+		t1 = time.time()
+
+		res = result_txt(f0, f1, success)
+		outstr = '{} {:7.2f}s {} {} {}'.format(i, t1-t0, f0, f1, res)
+		print(outstr)
+		logging.info(outstr)
+		if res == 'Better':
+			best = f1
+			tasks0 = tasks1
+			f0 = f1
+			tasks1 = perturb_allocations(tasks1, args.perturbation_rate)
+		else:
+			tasks1 = perturb_allocations(tasks0, args.perturbation_rate)
+
+		t0 = t1
+	print(best)
+	logging.info(best)
+
+def configure_logs(args):
+	'''Set up logging'''
+	logging.basicConfig(
+			filename='{}\\{}.log'.format(args.new_dir, args.name_root),
+			format='%(asctime)s %(message)s\n',
+			datefmt='%Y%m%d %I:%M:%S %p',
+			level=logging.DEBUG
+		)
+	logging.info(os.path.abspath(__file__))
+	logging.info(args)
+
+#TODO: new param to specify the tab
+def configure_parser():
+	'''Set up command line option parser'''
+	man = '''
+	Imagine you have a set of tasks with associated effort estimates and a 
+	list of known resources. If you allocate one to the other, Taskjuggler 
+	will allow you to determine when the project will be completed.
+
+	EvolutionPP goes one step further and iteratively allocates your plan 
+	randomly, and then schedules the allocated tasks using Taskjuggler. 
+	The delivery date is recorded and then EvolutionPP slightly deforms 
+	the resource allocation to see if the end date is brought in. If the 
+	new plan is superior, then this new configuration is the basis for 
+	the next loop.  Otherwise the old version is perturbed anew.
+
+	In this way, over a large number of iterations, the plan improves.
+
+	Input formats: TBD
+	'''
+	new_dir = str(uuid.uuid4())
+	parser = argparse.ArgumentParser(description=
+			'Evolutionary project planner from effort estimates based on Taskjuggler.', 
+			epilog=man)
+	parser.add_argument('team_str', 
+			help='TeamName:number_of_members commalist. Ex: B:2,D:10,N:5', 
+			type=str)
+	parser.add_argument('task_file', 
+			help='Excel or csv file that contains the tasks', type=str)
+	parser.add_argument('-pr', '--perturbation_rate', 
+			help='percentage perturbation per iteration', type=int, default=5)
+	parser.add_argument('-r', '--name_root', 
+			help='name root for taskjuggler files', type=str, default='acc')
+	parser.add_argument('-i', '--iterations', 
+			help='number of evolutionary iterations', type=int, default=10)
+	parser.add_argument('-if', '--initial_fitness', 
+			help='initial project delivery date', type=str, default='2100-01-01')
+	parser.add_argument('-nd', '--new_dir', 
+			help='subdir where intermediate files are stored', 
+			type=str, default=new_dir)
+	args = parser.parse_args()
+	return args
+		
+if __name__ == '__main__':
+	#TODO: take file name and parameters from command line
+	#TODO: proper logging
+	args = configure_parser()
+	os.mkdir(args.new_dir)
+	configure_logs(args)
+	teamd = parse_team(args.team_str)  #TODO: Global data. Yuck.
+
+	evolution_loop(args)
+	logging.info('Done')
