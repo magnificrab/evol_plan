@@ -1,0 +1,38 @@
+project acc1 "Accelerate Migration" 2017-08-01 +100m {  #TODO: should be 18 months
+  timezone "America/New_York"
+  timeformat "%Y-%m-%d"
+  currency "USD"
+  numberformat "-" "" "," "." 1
+
+  scenario plan "Plan" {
+    scenario delayed "Delayed"
+  }
+}
+
+rate 1000.0
+
+#TODO: add more holidays
+leaves holiday "Fourth of July" 2017-07-04
+leaves holiday "Thanksgiving" 2017-11-23
+
+resource rb "Rebecca Burkey" 
+
+task main "Project Kickoff" {
+}
+
+include "acc.tji" 
+
+navigator navbar {
+  hidereport @none
+}
+
+taskreport highgantt "HLGantt" {
+  formats csv
+  columns bsi { title 'WBS' },
+          name, start, end, effort
+  timeformat "%Y-%m-%d"
+  hideresource @all
+  rolluptask @all
+  #caption 'All effort values are in person quarters.'
+
+}

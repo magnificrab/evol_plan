@@ -1,0 +1,255 @@
+project acc1 "Accelerate Migration" 2017-08-01 +36m {  #TODO: should be 18 months
+  timezone "America/New_York"
+  timeformat "%Y-%m-%d"
+  currency "USD"
+  numberformat "-" "" "," "." 1
+
+  scenario plan "Plan" {
+    scenario delayed "Delayed"
+  }
+}
+
+rate 1000.0
+
+#TODO: add more holidays
+leaves holiday "Fourth of July" 2017-07-04
+leaves holiday "Thanksgiving" 2017-11-23
+
+resource rb "Rebecca Burkey" 
+
+task main "Project Kickoff" {
+}
+
+include "acc.tji" 
+
+navigator navbar {
+  hidereport @none
+}
+
+macro TaskTip [
+  tooltip istask() -8<-
+    '''Start: ''' <-query attribute='start'->
+    '''End: ''' <-query attribute='end'->
+    ----
+    '''Resources:'''
+
+    <-query attribute='resources'->
+    ----
+    '''Precursors: '''
+
+    <-query attribute='precursors'->
+    ----
+    '''Followers: '''
+
+    <-query attribute='followers'->
+    ->8-
+]
+
+textreport frame "" {
+  header -8<-
+    == Project Accelerate ==
+    <[navigator id="navbar"]>
+  ->8-
+  footer "----"
+  textreport indexgantt1 "Detail Gantt" {
+    formats html
+    center '<[report id="originalgantt"]>'
+  }
+  textreport indexgantt2 "Mid Gantt" {
+    formats html
+    center '<[report id="midgantt"]>'
+  }
+  textreport indexgantt3 "High Gantt" {
+    formats html
+    center '<[report id="highgantt"]>'
+  }
+  textreport indexrtv "RTV" {
+    formats html
+    center '<[report id="resourcetask"]>'
+  }
+  textreport indexpert "PERT" {
+    formats html
+    center '<[report id="pert"]>'
+  }
+  textreport "ContactList" {
+    formats html
+    title "Contact List"
+    center '<[report id="contactList"]>'
+  }
+  textreport "ResourceGraph" {
+    formats html
+    title "Resource Graph"
+    center '<[report id="resourceGraph"]>'
+  }
+  textreport "Status" {
+    formats html
+    center -8<-
+      <[report id="status.dashboard"]>
+      ----
+      <[report id="status.completed"]>
+      ----
+      <[report id="status.ongoing"]>
+      ----
+      <[report id="status.future"]>
+    ->8-
+  }
+}
+
+taskreport originalgantt "Original Gantt" {
+  header -8<-
+    === Fully Detailed Original Project Plan ===
+  ->8-
+	columns bsi { title 'WBS' },
+          name, start, end, effort, 
+          chart { ${TaskTip} }
+  # For this report we like to have the abbreviated weekday in front
+  # of the date. %a is the tag for this.
+  timeformat "%a %Y-%m-%d"
+  loadunit days
+  hideresource @all
+  #balance cost rev  #TODO: don't care about accounts
+  caption 'All effort values are in person days.'
+
+  footer -8<-
+  ->8-
+}
+
+taskreport midgantt "Mid-level Gantt" {
+  header -8<-
+    === Mid Level Original Project Plan ===
+  ->8-
+	columns bsi { title 'WBS' },
+          name, start, end, effort, 
+          chart { ${TaskTip} scale month }
+  timeformat "%Y-%m-%d"
+  loadunit months
+  hideresource @all
+  rolluptask (treelevel() > 1)
+  caption 'All effort values are in person months.'
+
+  footer -8<-
+  ->8-
+}
+
+taskreport highgantt "High-level Gantt" {
+  header -8<-
+    === High Level Original Project Plan ===
+  ->8-
+	columns bsi { title 'WBS' },
+          name, start, end, effort, 
+          chart { ${TaskTip} scale quarter }
+  timeformat "%Y-%m"
+  loadunit quarters
+  hideresource @all
+  #rolluptask (treelevel() > 0)
+  rolluptask @all
+  caption 'All effort values are in person quarters.'
+
+  footer -8<-
+  ->8-
+}
+
+taskreport pert "PERT Data" {
+  header -8<-
+    === PERT Data ===
+  ->8-
+  columns bsi { title 'WBS' },
+          name, start, end, effort, duration, pathcriticalness,
+          headcount, precursors
+  loadunit days
+  hideresource @all
+  caption 'All effort values are in person days.'
+
+  footer -8<-
+  ->8-
+}
+
+taskreport resourcetask "Resource Task View" {
+  header -8<-
+    === Resource Per Task ===
+  ->8-
+  columns bsi { title 'WBS' },
+          name, start, end, effort, duration, 
+          headcount, resources, pathcriticalness,
+          chart { ${TaskTip} scale day width 500 }
+  # For this report we like to have the abbreviated weekday in front
+  # of the date. %a is the tag for this.
+  #timeformat "%a %Y-%m-%d"
+  loadunit days
+  #hideresource @all
+  hideresource ~(isleaf() & isleaf_())
+  caption 'All effort values are in person days.'
+
+  footer -8<-
+  ->8-
+}
+
+# A list of all employees with their contact details.
+resourcereport contactList "" {
+  scenarios delayed
+  headline "Contact list and duty plan"
+  columns name,
+          email { celltext 1 "[mailto:<-email-> <-email->]" },
+          #Phone,
+          managers { title "Manager" },
+          chart { scale day }
+  hideresource ~isleaf()
+  sortresources name.up
+  hidetask @all
+}
+
+# A graph showing resource allocation. It identifies whether each
+# resource is under- or over-allocated for.
+resourcereport resourceGraph "" {
+  scenarios delayed
+  headline "Resource Allocation Graph"
+  columns no, name, effort, rate, weekly { ${TaskTip} }
+  loadunit shortauto
+  # We only like to show leaf tasks for leaf resources.
+  hidetask ~(isleaf() & isleaf_())
+  sorttasks plan.start.up
+}
+
+macro AlertColor [
+  cellcolor plan.alert = 0 "#00D000" # green
+  cellcolor plan.alert = 1 "#D0D000" # yellow
+  cellcolor plan.alert = 2 "#D00000" # red   
+]
+
+taskreport status "" {
+  columns bsi { width 50 title 'WBS' }, name { width 150 },
+          start { width 100 }, end { width 100 },
+          effort { width 100 },
+          alert { tooltip plan.journal
+                          != '' "<-query attribute='journal'->" width 150 },
+          status { width 150 }
+  scenarios delayed
+
+  taskreport dashboard "" {
+    headline "Project Dashboard (<-query attribute='now'->)"
+    columns name { title "Task" ${AlertColor} width 200},
+            resources { width 200 ${AlertColor}
+                        listtype bullets
+                        listitem "<-query attribute='name'->"
+                        start ${projectstart} end ${projectend} },
+            alerttrend { title "Trend" ${AlertColor} width 50 },
+            journal { width 350 ${AlertColor} }
+    journalmode status_up
+    journalattributes headline, author, date, summary, details
+    hidetask ~hasalert(0)
+    sorttasks alert.down, delayed.end.up
+    period %{${now} - 1w} +1w
+  }
+  taskreport completed "" {
+    headline "Already completed tasks"
+    hidetask ~(delayed.end <= ${now})
+  }
+  taskreport ongoing "" {
+    headline "Ongoing tasks"
+    hidetask ~((delayed.start <= ${now}) & (delayed.end > ${now}))
+  }
+  taskreport future "" {
+    headline "Future tasks"
+    hidetask ~(delayed.start > ${now})
+  }
+}
