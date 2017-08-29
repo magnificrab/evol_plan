@@ -228,7 +228,10 @@ def generate_tji(t, name_root):
 			if tc > 1:
 				of.write('}\n')
 				of.write('}\n')
-			of.write('task {0} "{1}" {{\n'.format(tplan[3][:1], tplan[3]))
+#			of.write('task {0} "{1}" {{\n'.format(tplan[3][:1], tplan[3]))
+# We'll assume that every tabname ends in "(<X>)" where "<X>" is a single letter
+# unique within the workbook
+			of.write('task {0} "{1}" {{\n'.format(tplan[3][-2:-1], tplan[3]))
 		if tplan[0] == 'super':
 			uc += 1
 			if uc > 1:
@@ -271,7 +274,8 @@ def extract_csv(csvfile):
 def fully_allocated(t):
 	'''Returns true if the task is a subtask which has been allocated'''
 	for tplan in t:
-		if tplan[0] == 'sub' and (tplan[8] == '' or tplan[8] is None):
+#		if tplan[0] == 'sub' and (tplan[8] == '' or tplan[8] is None):
+		if tplan[0] == 'sub' and (tplan[10] == '' or tplan[10] is None):
 			return False
 	return True
 
@@ -298,6 +302,9 @@ def evolution_loop(args):
 	best = args.initial_fitness
 	f0 = args.initial_fitness
 	t0 = time.time()
+# Let's keep track of the best Tji file so we can leave it in the upper
+# directory as an artifact
+	bestTjiFile = ''
 	[handle, ext] = args.task_file.split('.')
 	if ext in ['xls', 'xlsx', 'xlsm']:
 		tasks2 = extract_excel(args.task_file, 'Summary') #TODO
@@ -307,7 +314,7 @@ def evolution_loop(args):
 		print('Error: unsupported file type: ', ext)
 		logging.error('Error: unsupported file type: {}'.format(ext))
 		sys.exit(1)
-	pdb.set_trace()
+#	pdb.set_trace()
 	if not fully_allocated(tasks2):
 		tasks1 = allocate_resources(tasks2)
 	else:
@@ -319,12 +326,18 @@ def evolution_loop(args):
 		generate_tji(tasks1, args.name_root)
 
 		#Run taskjuggler
-		success = execute_rb('C:\\Ruby22-x64\\lib\\ruby\\gems\\2.2.0\\gems\\taskjuggler-3.6.0\\lib\\tj3.rb --silent {}_min.tjp'.format(args.name_root))
+#		success = execute_rb('C:\\Ruby22-x64\\lib\\ruby\\gems\\2.2.0\\gems\\taskjuggler-3.6.0\\lib\\tj3.rb --silent {}_min.tjp'.format(args.name_root))
+		success = execute_rb('C:\\Ruby24-x64\\lib\\ruby\\gems\\2.4.0\\gems\\taskjuggler-3.6.0\\lib\\tj3.rb --silent {}_min.tjp'.format(args.name_root))
 
 		#Determine result
-		shutil.move('{}.tji'.format(args.name_root), 
-				'{}\\{}_{}.tji'.format(args.new_dir, 
-					args.name_root, str(i).zfill(4)))
+# We'll want to keep track of the Tji filename for later
+		movedFileName = '{}\\{}_{}.tji'.format(args.new_dir, 
+				args.name_root,str(i).zfill(4))
+		
+#		shutil.move('{}.tji'.format(args.name_root), 
+#				'{}\\{}_{}.tji'.format(args.new_dir, 
+#					args.name_root, str(i).zfill(4)))
+		shutil.move('{}.tji'.format(args.name_root), movedFileName)
 		if success:
 			f1 = fitness_result()
 			shutil.move('HLGantt.csv', '{}\\HLGantt{}.csv'.format(args.new_dir, str(i).zfill(4)))
@@ -339,6 +352,7 @@ def evolution_loop(args):
 		logging.info(outstr)
 		if res == 'Better':
 			best = f1
+			bestTjiFile = movedFileName
 			tasks0 = tasks1
 			f0 = f1
 			tasks1 = perturb_allocations(tasks1, args.perturbation_rate)
@@ -347,6 +361,7 @@ def evolution_loop(args):
 
 		t0 = t1
 	print(best)
+	shutil.copy(bestTjiFile, '{}.tji'.format(args.name_root))
 	logging.info(best)
 
 def configure_logs(args):
