@@ -320,14 +320,15 @@ def evolution_loop(args):
 	else:
 		tasks1 = tasks2
 
+	tasks0 = tasks1  #TODO: why is this necessary and why discovered now?
 	for i in range(0, args.iterations):
 		#Randomize the allocations
 		save_tasks(tasks1, args.name_root, args.new_dir, i)
 		generate_tji(tasks1, args.name_root)
 
 		#Run taskjuggler
-#		success = execute_rb('C:\\Ruby22-x64\\lib\\ruby\\gems\\2.2.0\\gems\\taskjuggler-3.6.0\\lib\\tj3.rb --silent {}_min.tjp'.format(args.name_root))
-		success = execute_rb('C:\\Ruby24-x64\\lib\\ruby\\gems\\2.4.0\\gems\\taskjuggler-3.6.0\\lib\\tj3.rb --silent {}_min.tjp'.format(args.name_root))
+		success = execute_rb('C:\\Ruby22-x64\\lib\\ruby\\gems\\2.2.0\\gems\\taskjuggler-3.6.0\\lib\\tj3.rb --silent {}_min.tjp'.format(args.name_root))
+		#success = execute_rb('C:\\Ruby24-x64\\lib\\ruby\\gems\\2.4.0\\gems\\taskjuggler-3.6.0\\lib\\tj3.rb --silent {}_min.tjp'.format(args.name_root))
 
 		#Determine result
 # We'll want to keep track of the Tji filename for later
